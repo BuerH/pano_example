@@ -1,0 +1,12 @@
+# 构建产物
+/lib/
+/panorama_pipeline
+build/
+*.o
+*.so
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+*.swp

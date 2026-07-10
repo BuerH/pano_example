@@ -3,6 +3,7 @@
 #include <dlfcn.h>
 #include <atomic>
 #include <iostream>
+#include <string>
 #include <thread>
 #include <unistd.h>
 #include <vector>
@@ -56,7 +57,34 @@ void input_thread() {
     }
 }
 
-int main() {
+void print_usage(const char* prog) {
+    cout << "用法: " << prog << " [--mode multi|single]\n"
+         << "  multi  : 默认。每个相机模块和显示模块各自独立线程（并行采集）\n"
+         << "  single : 单线程顺序执行，依次取 4 路帧后拼接显示\n"
+         << "           （取帧方式类似 libpanorama/examples/param_tuner）" << endl;
+}
+
+int main(int argc, char** argv) {
+    string mode = "multi";
+    for (int i = 1; i < argc; ++i) {
+        string arg = argv[i];
+        if ((arg == "--mode" || arg == "-m") && i + 1 < argc) {
+            mode = argv[++i];
+        } else if (arg == "--help" || arg == "-h") {
+            print_usage(argv[0]);
+            return 0;
+        } else {
+            cerr << "未知参数: " << arg << endl;
+            print_usage(argv[0]);
+            return -1;
+        }
+    }
+    if (mode != "multi" && mode != "single") {
+        cerr << "无效模式: " << mode << "（只支持 multi / single）" << endl;
+        print_usage(argv[0]);
+        return -1;
+    }
+
     MessageBus bus;
 
     // 相机加载顺序对应总线槽位 0→1→2→3（与拼接逻辑顺序一致）
@@ -79,12 +107,27 @@ int main() {
     cout << "=== 启动显示模块 ===" << endl;
     Module* display = load_module("./lib/display.so", &bus);
 
-    // 每个模块跑在各自线程里，循环调用 run()
     vector<thread> workers;
-    for (Module* cam : cameras) {
-        if (cam) workers.emplace_back([cam]() { while (!need_exit) cam->run(); });
+    if (mode == "multi") {
+        // 每个模块跑在各自线程里，循环调用 run()
+        cout << "=== 运行模式: multi（多线程并行采集） ===" << endl;
+        for (Module* cam : cameras) {
+            if (cam) workers.emplace_back([cam]() { while (!need_exit) cam->run(); });
+        }
+        if (display) workers.emplace_back([display]() { while (!need_exit) display->run(); });
+    } else {
+        // single：同一线程内依次取 4 路帧再拼接显示（同 param_tuner 的顺序取帧），
+        // 每轮各路帧的采集时刻更接近同一次循环，便于排查多线程时序问题。
+        cout << "=== 运行模式: single（单线程顺序采集） ===" << endl;
+        workers.emplace_back([&cameras, display]() {
+            while (!need_exit) {
+                for (Module* cam : cameras) {
+                    if (cam) cam->run();
+                }
+                if (display) display->run();
+            }
+        });
     }
-    if (display) workers.emplace_back([display]() { while (!need_exit) display->run(); });
 
     thread t_input(input_thread);
 

@@ -1,9 +1,11 @@
 #include "module.h"
 #include "yolov8_detector.h"
 #include <opencv2/highgui.hpp>
+#include <opencv2/videoio.hpp>
 #include "panorama_api.h"
 #include <iostream>
 #include <chrono>
+#include <ctime>
 #include <vector>
 #include <thread>
 #include <cstdlib>
@@ -16,6 +18,47 @@ private:
     PanoramaAPI api;
     vector<cv::Mat> frames;  // 只用于临时存4路帧，本地变量，无多线程竞争
     YoloV8Detector detector;
+
+    cv::VideoWriter recorder;
+    bool recording = false;
+    cv::Size record_size;
+    static constexpr double RECORD_FPS = 25.0;
+
+    static std::string timestamp_filename()
+    {
+        time_t now = time(nullptr);
+        tm tm_buf;
+        localtime_r(&now, &tm_buf);
+        char buf[32];
+        strftime(buf, sizeof(buf), "%Y%m%d_%H%M%S", &tm_buf);
+        return std::string(buf) + ".avi";
+    }
+
+    void toggle_recording(const cv::Mat& frame)
+    {
+        if (!recording)
+        {
+            std::string filename = timestamp_filename();
+            // MJPG + avi：不依赖外部编码器，OpenCV 各版本都可用
+            if (recorder.open(filename, cv::VideoWriter::fourcc('M', 'J', 'P', 'G'),
+                              RECORD_FPS, frame.size()))
+            {
+                record_size = frame.size();
+                recording = true;
+                cout << "[display] 开始录制: " << filename << endl;
+            }
+            else
+            {
+                cerr << "[display] 录制启动失败，无法打开 " << filename << endl;
+            }
+        }
+        else
+        {
+            recorder.release();
+            recording = false;
+            cout << "[display] 录制结束" << endl;
+        }
+    }
 
     static YoloV8Detector::Config load_detector_config()
     {
@@ -114,9 +157,36 @@ public:
         const int crop_height = std::min(510, roi_height);
         Mat small_panorama = detected_panorama(Rect(0, roi_y, detected_panorama.cols, crop_height));
 
+        // 先写入录制文件，再画 REC 标记，避免标记被录进视频
+        if (recording)
+        {
+            cv::Mat record_frame = small_panorama;
+            if (record_frame.size() != record_size)
+            {
+                // 拼接尺寸偶发变化时缩放到录制尺寸，保证文件可播放
+                cv::resize(small_panorama, record_frame, record_size);
+            }
+            recorder.write(record_frame);
+
+            cv::circle(small_panorama, cv::Point(25, 25), 8, cv::Scalar(0, 0, 255), cv::FILLED);
+            cv::putText(small_panorama, "REC", cv::Point(40, 32),
+                        cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 0, 255), 2);
+        }
+
         // cv::imshow("PANO", panorama);
         cv::imshow("panorama", small_panorama);
-        cv::waitKey(1);
+        int key = cv::waitKey(1);
+        if (key == 'r' || key == 'R')
+            toggle_recording(small_panorama);
+    }
+
+    ~DisplayModule() override
+    {
+        if (recording)
+        {
+            recorder.release();
+            cout << "[display] 录制结束（退出时自动保存）" << endl;
+        }
     }
 };
 

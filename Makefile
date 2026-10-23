@@ -1,8 +1,10 @@
 CXX       = g++
 INCLUDES  = -Iinclude
 OPENCV    = `pkg-config --cflags --libs opencv4`
-CXXFLAGS  = -std=c++17 -fPIC -Wall -Wno-write-strings -I/usr/local/include $(INCLUDES)
-LIBS      = -L/usr/local/lib -lpanorama
+PANORAMA_PREFIX ?= /usr
+PANORAMA_LIBDIR ?= $(PANORAMA_PREFIX)/lib
+CXXFLAGS  = -std=c++17 -fPIC -Wall -Wno-write-strings -I$(PANORAMA_PREFIX)/include $(INCLUDES)
+LIBS      = -L$(PANORAMA_LIBDIR) -lpanorama
 
 BIN       = panorama_pipeline
 LIBDIR    = lib

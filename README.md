@@ -50,8 +50,10 @@ panorama_pipeline/
 ## 依赖
 
 - OpenCV 4（`pkg-config --cflags --libs opencv4` 可用）
-- [libpanorama](https://github.com/BuerH/pano)：拼接库，需先编译并安装到 `/usr/local/lib`、
-  头文件在 `/usr/local/include`（`display` 目标链接 `-lpanorama`）。
+- [libpanorama](https://github.com/BuerH/pano)：拼接库，先安装匹配系统版本的
+  `libpanorama1` 和 `libpanorama-dev` 安装包。包内头文件位于 `/usr/include`，
+  amd64 库位于 `/usr/lib/x86_64-linux-gnu`，由编译器的系统搜索路径查找
+  （`display` 目标链接 `-lpanorama`）。
 - 四路 V4L2 相机，默认设备 `/dev/video0,2,4,6`，分辨率 800×600 @ 30fps。
 
 ## 构建
@@ -62,6 +64,17 @@ make clean      # 清理产物
 ```
 
 产物：可执行文件 `panorama_pipeline`，模块 `.so` 输出到 `lib/`。
+
+默认使用安装包的 `/usr` 前缀。如果从源码安装到 `/usr/local`，使用：
+
+```bash
+make clean
+make PANORAMA_PREFIX=/usr/local
+```
+
+其他安装位置可用 `PANORAMA_PREFIX` 指定；库目录不在该前缀的 `lib/` 下时，
+另行指定 `PANORAMA_LIBDIR=/实际/库目录`。自定义库目录还需加入系统动态库
+搜索配置，或在运行时通过 `LD_LIBRARY_PATH` 指定。
 
 ## 运行
 

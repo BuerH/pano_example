@@ -3,7 +3,7 @@
 多路相机实时全景拼接 + 目标检测的流水线程序。
 
 四路 USB 相机各自采集图像，经由线程安全的消息总线汇集到显示模块，
-显示模块调用 [libpanorama](../libpanorama) 完成实时拼接，再用 YOLOv8 做目标检测并显示。
+显示模块调用 [libpanorama](https://github.com/BuerH/pano) 完成实时拼接，再用 YOLOv8 做目标检测并显示。
 
 ## 架构
 
@@ -50,7 +50,7 @@ panorama_pipeline/
 ## 依赖
 
 - OpenCV 4（`pkg-config --cflags --libs opencv4` 可用）
-- [libpanorama](../libpanorama)：拼接库，需先编译并安装到 `/usr/local/lib`、
+- [libpanorama](https://github.com/BuerH/pano)：拼接库，需先编译并安装到 `/usr/local/lib`、
   头文件在 `/usr/local/include`（`display` 目标链接 `-lpanorama`）。
 - 四路 V4L2 相机，默认设备 `/dev/video0,2,4,6`，分辨率 800×600 @ 30fps。
 
@@ -90,3 +90,18 @@ extern "C" Module* create() {
 ```
 
 不传 ROI（或宽高为 0）则使用完整画面。
+
+必需模块加载或初始化失败时，程序释放已加载模块并以非零状态退出。
+正常退出时先等待工作线程结束，再销毁模块并卸载动态库，确保相机和录像资源释放。
+标准输入关闭（EOF）也会触发退出。
+
+## 回归验证
+
+安装上述 OpenCV 和 C++ 构建依赖以及 Python 3 后执行：
+
+```bash
+python3 tests/lifecycle.py
+```
+
+测试使用模拟动态模块，无需摄像头和桌面环境，覆盖正常加载、初始化失败、
+初始化抛出异常、工厂返回空指针，以及先销毁模块再卸载动态库的顺序。

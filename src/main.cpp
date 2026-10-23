@@ -3,6 +3,8 @@
 #include <dlfcn.h>
 #include <atomic>
 #include <iostream>
+#include <memory>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <unistd.h>
@@ -14,7 +16,16 @@ using namespace std;
 atomic<bool> need_exit(false);
 
 // 已加载的 .so 句柄，程序结束时统一释放
-vector<void*> dl_handles;
+struct LoadedModule {
+    void* handle;
+    unique_ptr<Module> module;
+    explicit LoadedModule(void* h) : handle(h) {}
+    ~LoadedModule() {
+        module.reset();
+        dlclose(handle);
+    }
+};
+vector<unique_ptr<LoadedModule>> loaded_modules;
 
 // 动态加载一个模块 .so，调用其 create() 并完成 init()
 Module* load_module(const char* path, MessageBus* bus) {
@@ -31,25 +42,32 @@ Module* load_module(const char* path, MessageBus* bus) {
         return nullptr;
     }
 
-    Module* module = create();
-    module->bus = bus;
-
-    if (!module->init()) {
-        cerr << "⚠️  初始化失败：" << path << endl;
-    } else {
-        cout << "✅ 初始化成功：" << path << endl;
+    auto loaded = make_unique<LoadedModule>(handle);
+    try {
+        loaded->module.reset(create());
+        if (!loaded->module) throw runtime_error("create() returned null");
+        loaded->module->bus = bus;
+        if (!loaded->module->init()) {
+            cerr << "初始化失败：" << path << endl;
+            return nullptr;
+        }
+        Module* module = loaded->module.get();
+        loaded_modules.push_back(std::move(loaded));
+        return module;
+    } catch (const exception& e) {
+        cerr << "加载模块失败：" << path << ": " << e.what() << endl;
+    } catch (...) {
+        cerr << "加载模块失败：" << path << endl;
     }
-
-    dl_handles.push_back(handle);
-    return module;
+    return nullptr;
 }
 
 // 监听键盘：按 q 退出
 void input_thread() {
-    char c;
+    int c;
     while (true) {
         c = getchar();
-        if (c == 'q' || c == 'Q') {
+        if (c == EOF || c == 'q' || c == 'Q') {
             cout << "\n🚪 收到退出指令，正在关闭程序..." << endl;
             need_exit = true;
             break;
@@ -100,12 +118,21 @@ int main(int argc, char** argv) {
 
     vector<Module*> cameras;
     for (const char* lib : camera_libs) {
-        cameras.push_back(load_module(lib, &bus));
+        Module* camera = load_module(lib, &bus);
+        if (!camera) {
+            loaded_modules.clear();
+            return 1;
+        }
+        cameras.push_back(camera);
         sleep(1); // 逐个打开，避免 V4L2 设备同时初始化冲突
     }
 
     cout << "=== 启动显示模块 ===" << endl;
     Module* display = load_module("./lib/display.so", &bus);
+    if (!display) {
+        loaded_modules.clear();
+        return 1;
+    }
 
     vector<thread> workers;
     if (mode == "multi") {
@@ -134,7 +161,7 @@ int main(int argc, char** argv) {
     for (auto& t : workers) t.join();
     t_input.join();
 
-    for (void* h : dl_handles) dlclose(h);
+    loaded_modules.clear();
 
     cout << "✅ 程序已安全退出！" << endl;
     return 0;

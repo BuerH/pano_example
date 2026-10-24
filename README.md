@@ -47,6 +47,36 @@ panorama_pipeline/
 └── Makefile
 ```
 
+## 一键安装
+
+在 Ubuntu 22.04 / 24.04 amd64 或 Jetson Orin 的 Ubuntu 20.04 arm64 上：
+
+```bash
+bash install-app.sh --dir "$HOME/pano-app" --jobs 4
+```
+
+脚本会下载并校验网站上的授权运行包和 SDK，自动安装系统依赖，
+编译当前仓库的源码，并生成独立应用目录。Orin 会额外安装配套 OpenCV
+4.10.0 到 `/opt/pano/opencv-4.10.0`，编译和启动均使用它；当前为 CPU 版本，未启用 CUDA。
+运行环境仍需要桌面显示和四路摄像头权限。
+
+安装结束会打印机器码，也可再次运行：
+
+```bash
+~/pano-app/pano --machine-id
+```
+
+到 https://wudu.bitshe.cn/pano/activate.html 申请授权，审核通过后将下载的
+`license.lic` 放入 `~/pano-app/`，然后启动：
+
+```bash
+~/pano-app/pano
+```
+
+重复执行安装命令会保留 `license.lic` 和 `camera-cache/` 中的标定缓存。
+脚本不会自动启动摄像头。使用 `bash install-app.sh --help` 查看其他选项；
+`--example-ref master` 可改为拉取 GitHub 指定分支，`--source PATH` 可指定本地源码。
+
 ## 依赖
 
 - OpenCV 4（`pkg-config --cflags --libs opencv4` 可用）

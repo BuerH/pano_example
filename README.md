@@ -3,7 +3,8 @@
 多路相机实时全景拼接 + 目标检测的流水线程序。
 
 四路 USB 相机各自采集图像，经由线程安全的消息总线汇集到显示模块，
-显示模块调用 [libpanorama](https://github.com/BuerH/pano) 完成实时拼接，再用 YOLOv8 做目标检测并显示。
+显示模块调用 [libpanorama](https://github.com/BuerH/pano) 完成实时拼接，默认在显示器显示；
+可选开启 YOLOv8 目标检测，或通过 HTTP MJPEG 输出视频。
 
 ## 架构
 
@@ -13,7 +14,7 @@
 
 ```
   camera1.so ┐
-  camera2.so ├─ push ─►  MessageBus  ─ pop ─►  display.so ─► 拼接 + YOLO + 显示
+  camera2.so ├─ push ─►  MessageBus  ─ pop ─►  display.so ─► 拼接 + 可选 YOLO + 本地显示/网络输出
   camera3.so │          (每路最新帧)
   camera4.so ┘
 ```
@@ -24,7 +25,7 @@
   相机编号、总线槽位和裁剪 ROI。新增相机只需多一行实例化。
   详见 [include/camera_module.h](include/camera_module.h)。
 - **DisplayModule**：汇集四路最新帧，仅在有新帧时才拼接，避免对相同画面重复
-  计算；拼接后跑 YOLOv8 检测并显示。详见 [modules/display/display.cpp](modules/display/display.cpp)。
+  计算；可选运行 YOLOv8，输出到本地窗口或 HTTP 视频流。详见 [modules/display/display.cpp](modules/display/display.cpp)。
 
 ## 目录结构
 
@@ -38,6 +39,7 @@ panorama_pipeline/
 │   └── yolov8_detector.h
 ├── src/
 │   ├── main.cpp            # 主程序：加载模块、起线程、监听退出
+│   ├── mjpeg_server.cpp    # HTTP MJPEG 服务
 │   └── yolov8_detector.cpp
 ├── modules/
 │   ├── cameras/            # 四路相机的实例化（camera1..4.cpp）
@@ -58,7 +60,7 @@ bash install-app.sh --dir "$HOME/pano-app" --jobs 4
 脚本会下载并校验网站上的授权运行包和 SDK，自动安装系统依赖，
 编译当前仓库的源码，并生成独立应用目录。Orin 会额外安装配套 OpenCV
 4.10.0 到 `/opt/pano/opencv-4.10.0`，编译和启动均使用它；当前为 CPU 版本，未启用 CUDA。
-运行环境仍需要桌面显示和四路摄像头权限。
+运行环境需要四路摄像头权限；默认本地显示还需要桌面环境，网络输出模式不需要桌面。
 
 安装结束会打印机器码，也可再次运行：
 
@@ -108,14 +110,59 @@ make PANORAMA_PREFIX=/usr/local
 
 ## 运行
 
+默认在显示器显示，YOLO **关闭**，不会加载模型或执行推理：
+
 ```bash
 ./panorama_pipeline
 ```
 
+开启 YOLOv8 检测：
+
+```bash
+./panorama_pipeline --yolo
+```
+
+切换为网络输出（不创建本地窗口），监听 TCP **15678** 端口：
+
+```bash
+./panorama_pipeline --output stream
+# 网络输出并开启检测
+./panorama_pipeline --output stream --yolo
+# 可选：更换端口、使用单线程采集
+./panorama_pipeline --output stream --port 15679 --mode single
+```
+
+其他设备使用运行该程序的设备 IP 播放：
+
+```bash
+ffplay -fflags nobuffer -flags low_delay http://192.168.1.100:15678/stream
+vlc http://192.168.1.100:15678/stream
+```
+
+OpenCV 也可读取 `cv::VideoCapture("http://设备IP:15678/stream")`。
+视频格式为 HTTP multipart MJPEG（JPEG 帧，质量 85），不含音频；不是 RTSP 或 H.264。
+输出与本地显示使用相同的裁剪画面，实际帧率取决于采集、拼接和编码速度。
+首次成功拼接后才有视频帧；客户端可提前连接等待。
+
+服务监听所有 IPv4 网卡，最多允许 8 个客户端，慢客户端不阻塞拼接；
+发送缓冲持续 10 秒没有进展时断开连接。网络带宽需求通常高于 H.264。
+供可信局域网使用，无登录认证或加密；远端访问需放通 TCP 15678。
+端口占用或显式开启 YOLO 后模型加载失败，会报错并退出。
+
+一键安装生成的启动器同样支持这些参数：
+
+```bash
+~/pano-app/pano --output stream
+~/pano-app/pano --output stream --yolo
+```
+
+本地显示模式下，窗口聚焦后按 `r` 开始/停止录像；网络模式下无窗口录像快捷键。
+两种输出方式都可以与 `--mode multi|single` 配合，默认仍为 `multi`。
+
 - 程序会按顺序打开 `lib/camera1.so` … `camera4.so`（对应总线槽位 0–3），
   再加载 `lib/display.so`。
 - 运行时按 `q` + 回车安全退出。
-- 模型路径默认 `./models/yolov8n.onnx` 与 `./models/coco.names`，
+- 仅在 `--yolo` 开启后读取模型配置。模型路径默认 `./models/yolov8n.onnx` 与 `./models/coco.names`，
   也可通过环境变量覆盖：`YOLOV8_MODEL_PATH`、`YOLOV8_CLASSES_PATH`、
   `YOLOV8_CONF_THRESHOLD`、`YOLOV8_SCORE_THRESHOLD`、`YOLOV8_NMS_THRESHOLD`、
   `YOLOV8_INPUT_WIDTH`、`YOLOV8_INPUT_HEIGHT`。
@@ -148,3 +195,14 @@ python3 tests/lifecycle.py
 
 测试使用模拟动态模块，无需摄像头和桌面环境，覆盖正常加载、初始化失败、
 初始化抛出异常、工厂返回空指针，以及先销毁模块再卸载动态库的顺序。
+
+网络输出与命令行参数测试（无需摄像头、桌面或生产许可）：
+
+```bash
+python3 tests/output.py
+# SDK 头文件在自定义目录时：
+python3 tests/output.py --panorama-include /自定义前缀/include
+```
+
+测试使用模拟拼接输入，验证真实显示模块的无窗口输出、MJPEG 帧解码、
+多个客户端、重连、慢速读取、端口占用，以及默认关闭/显式开启 YOLO 的模型加载行为。

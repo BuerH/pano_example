@@ -1,5 +1,7 @@
 #include "module.h"
 #include "yolov8_detector.h"
+#include "mjpeg_server.h"
+#include <opencv2/imgcodecs.hpp>
 #include <opencv2/highgui.hpp>
 #include <opencv2/videoio.hpp>
 #include "panorama_api.h"
@@ -17,7 +19,9 @@ class DisplayModule : public Module
 private:
     PanoramaAPI api;
     vector<cv::Mat> frames;  // 只用于临时存4路帧，本地变量，无多线程竞争
-    YoloV8Detector detector;
+    unique_ptr<YoloV8Detector> detector;
+    unique_ptr<MjpegServer> stream;
+    bool window_open = false;
 
     cv::VideoWriter recorder;
     bool recording = false;
@@ -96,13 +100,22 @@ private:
     }
 
 public:
-    DisplayModule() : detector(load_detector_config()) {}
-
     bool init() override
     {
-        cv::namedWindow("PANO", cv::WINDOW_NORMAL);
         frames.resize(4);
-        detector.init();
+        if (options.yolo) {
+            detector = make_unique<YoloV8Detector>(load_detector_config());
+            if (!detector->init()) return false;
+        }
+        cout << "[display] YOLO: " << (options.yolo ? "开启" : "关闭") << endl;
+        if (options.stream) {
+            stream = make_unique<MjpegServer>(options.port);
+            cout << "[display] HTTP MJPEG: http://0.0.0.0:" << options.port
+                 << "/stream（客户端请使用本机实际 IP）" << endl;
+        } else {
+            cv::namedWindow("panorama", cv::WINDOW_NORMAL);
+            window_open = true;
+        }
         return true;
     }
 
@@ -148,7 +161,8 @@ public:
 
         // 拼接 + 显示
         cv::Mat panorama = api.stitch(frames);
-        cv::Mat detected_panorama = detector.infer(panorama);
+        if (panorama.empty()) return;
+        cv::Mat detected_panorama = detector ? detector->infer(panorama) : panorama;
 
         const int roi_y = std::min(30, std::max(0, detected_panorama.rows - 1));
         const int roi_height = detected_panorama.rows - roi_y;
@@ -173,7 +187,12 @@ public:
                         cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 0, 255), 2);
         }
 
-        // cv::imshow("PANO", panorama);
+        if (stream) {
+            vector<unsigned char> jpeg;
+            if (cv::imencode(".jpg", small_panorama, jpeg, {cv::IMWRITE_JPEG_QUALITY, 85}))
+                stream->publish(jpeg);
+            return;
+        }
         cv::imshow("panorama", small_panorama);
         int key = cv::waitKey(1);
         if (key == 'r' || key == 'R')
@@ -182,6 +201,8 @@ public:
 
     ~DisplayModule() override
     {
+        stream.reset();
+        if (window_open) cv::destroyWindow("panorama");
         if (recording)
         {
             recorder.release();

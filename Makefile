@@ -25,7 +25,7 @@ $(CAMERAS): %: modules/cameras/%.cpp
 # 显示模块：拼接 + YOLO 检测 + 显示，需链接 libpanorama
 display:
 	@mkdir -p $(LIBDIR)
-	$(CXX) modules/display/display.cpp src/yolov8_detector.cpp -shared -o $(LIBDIR)/display.so $(CXXFLAGS) $(OPENCV) $(LIBS)
+	$(CXX) modules/display/display.cpp src/yolov8_detector.cpp src/mjpeg_server.cpp -shared -o $(LIBDIR)/display.so $(CXXFLAGS) $(OPENCV) $(LIBS) -pthread
 
 clean:
 	rm -rf $(BIN) $(LIBDIR)
